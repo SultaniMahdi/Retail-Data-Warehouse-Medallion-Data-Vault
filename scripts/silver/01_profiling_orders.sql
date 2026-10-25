@@ -74,3 +74,71 @@ SELECT TOP (20) *
 FROM   bronze.orders
 WHERE  LOWER(LTRIM(RTRIM(order_status))) = 'delivered'
   AND  NULLIF(LTRIM(RTRIM(order_delivered_customer_date)), '') IS NULL;
+
+
+
+/* ---------- 1. Overview: rows vs. distinct order_id ---------- */
+
+UPDATE silver.orders
+SET dq_status_date_mismatch = 1
+WHERE order_delivered_customer_ts IS NOT NULL
+  AND order_status <> 'delivered';
+
+-- Kontrolle: erwartet 6 Zeilen mit canceled
+SELECT order_status, COUNT(*) AS anzahl
+FROM silver.orders
+WHERE dq_status_date_mismatch = 1
+GROUP BY order_status;
+
+
+-- 1) Zeilen und eindeutige Schlüssel
+SELECT
+    COUNT(*)                           AS zeilen,
+    COUNT(DISTINCT customer_id)        AS eindeutige_customer_id,
+    COUNT(DISTINCT customer_unique_id) AS eindeutige_customer_unique_id
+FROM bronze.customers;
+
+-- 2) Leere Werte je Spalte
+SELECT
+    SUM(CASE WHEN NULLIF(TRIM(customer_id), '')              IS NULL THEN 1 ELSE 0 END) AS customer_id_leer,
+    SUM(CASE WHEN NULLIF(TRIM(customer_unique_id), '')       IS NULL THEN 1 ELSE 0 END) AS unique_id_leer,
+    SUM(CASE WHEN NULLIF(TRIM(customer_zip_code_prefix), '') IS NULL THEN 1 ELSE 0 END) AS zip_leer,
+    SUM(CASE WHEN NULLIF(TRIM(customer_city), '')            IS NULL THEN 1 ELSE 0 END) AS city_leer,
+    SUM(CASE WHEN NULLIF(TRIM(customer_state), '')           IS NULL THEN 1 ELSE 0 END) AS state_leer
+FROM bronze.customers;
+
+-- 3) Format-Prüfungen
+SELECT
+    SUM(CASE WHEN LEN(customer_id) <> 32 THEN 1 ELSE 0 END)                AS customer_id_laenge,
+    SUM(CASE WHEN LEN(customer_unique_id) <> 32 THEN 1 ELSE 0 END)         AS unique_id_laenge,
+    SUM(CASE WHEN LEN(customer_state) <> 2 THEN 1 ELSE 0 END)              AS state_laenge,
+    SUM(CASE WHEN LEN(customer_zip_code_prefix) <> 5 THEN 1 ELSE 0 END)    AS zip_nicht_5_stellig,
+    SUM(CASE WHEN customer_city <> LOWER(customer_city) THEN 1 ELSE 0 END) AS city_nicht_klein
+FROM bronze.customers;
+
+-- 4) Bestellungen pro Kunde
+SELECT bestellungen_pro_kunde, COUNT(*) AS anzahl_kunden
+FROM (
+    SELECT customer_unique_id, COUNT(*) AS bestellungen_pro_kunde
+    FROM bronze.customers
+    GROUP BY customer_unique_id
+) t
+GROUP BY bestellungen_pro_kunde
+ORDER BY bestellungen_pro_kunde;
+
+-- 5) Wechselnde Adressdaten pro Kunde
+SELECT COUNT(*) AS kunden_mit_wechselnden_daten
+FROM (
+    SELECT customer_unique_id
+    FROM bronze.customers
+    GROUP BY customer_unique_id
+    HAVING COUNT(DISTINCT customer_zip_code_prefix) > 1
+        OR COUNT(DISTINCT customer_city) > 1
+        OR COUNT(DISTINCT customer_state) > 1
+) t;
+
+-- 6) Bundesstaaten
+SELECT customer_state, COUNT(*) AS anzahl
+FROM bronze.customers
+GROUP BY customer_state
+ORDER BY anzahl DESC;
